@@ -1,0 +1,19 @@
+# Виртуальное окружение
+venv/
+.env
+.env.*
+*.env
+
+# Python мусор
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# Разное
+*.log

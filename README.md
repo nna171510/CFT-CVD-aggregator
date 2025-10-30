@@ -1,0 +1,1 @@
+Сервис для сбора данных с бирж (Binance, Bybit, OKX, Coinbase, Hyperliquid), агрегации и расчёта CVD.

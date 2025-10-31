@@ -7,6 +7,7 @@ import config
 class Aggregator:
     def __init__(self):
         self.db = Database()
+        self.shutdown_event = None  # Будет установлено из main.py
     
     def get_5min_boundaries(self, timestamp_ms: int = None):
         """Получить границы текущих 5 минут"""
@@ -37,6 +38,11 @@ class Aggregator:
             for market_type, market_config in markets.items():
                 if not market_config.get('enabled', False):
                     continue
+                
+                # Проверяем shutdown event
+                if self.shutdown_event and self.shutdown_event.is_set():
+                    print("Aggregation cancelled by shutdown")
+                    return
                 
                 # Проходим по всем символам (только BTC)
                 for symbol in market_config['symbols']:
@@ -69,6 +75,11 @@ class Aggregator:
         """Запустить периодическую агрегацию каждые 5 минут"""
         while True:
             try:
+                # Проверяем shutdown event
+                if self.shutdown_event and self.shutdown_event.is_set():
+                    print("Aggregation loop stopped")
+                    break
+                
                 # Ждем до следующих 5 минут
                 current_time = int(time.time())
                 seconds_until_next_interval = 300 - (current_time % 300)
@@ -77,11 +88,26 @@ class Aggregator:
                 wait_time = seconds_until_next_interval + 10
                 
                 print(f"⏰ Next aggregation in {wait_time} seconds ({wait_time//60}m {wait_time%60}s)")
-                await asyncio.sleep(wait_time)
+                
+                # Используем wait_for для возможности прерывания
+                try:
+                    if self.shutdown_event:
+                        await asyncio.wait_for(
+                            self.shutdown_event.wait(),
+                            timeout=wait_time
+                        )
+                        break  # Shutdown requested
+                    else:
+                        await asyncio.sleep(wait_time)
+                except asyncio.TimeoutError:
+                    pass  # Continue with aggregation
                 
                 # Запускаем агрегацию
                 await self.aggregate_all()
                 
+            except asyncio.CancelledError:
+                print("Aggregation cancelled")
+                break
             except Exception as e:
                 print(f"✗ Error in periodic aggregation: {e}")
                 await asyncio.sleep(30)

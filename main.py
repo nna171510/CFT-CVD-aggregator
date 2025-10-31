@@ -24,6 +24,7 @@ class CVDCollectorApp:
         self.cvd_calc = CVDCalculator()
         self.collectors = []
         self.running = False
+        self.shutdown_event = asyncio.Event()
         
     def initialize_collectors(self):
         """Инициализировать коллекторы для всех включенных бирж"""
@@ -86,7 +87,7 @@ class CVDCollectorApp:
         print(f"Starting collection loop (interval: {config.COLLECTION_INTERVAL}s)")
         print(f"{'='*80}\n")
         
-        while self.running:
+        while self.running and not self.shutdown_event.is_set():
             try:
                 start_time = asyncio.get_event_loop().time()
                 
@@ -101,8 +102,18 @@ class CVDCollectorApp:
                 
                 if wait_time > 0:
                     print(f"⏰ Next collection in {wait_time:.1f}s (collected {trades_count} trades in {execution_time:.1f}s)\n")
-                    await asyncio.sleep(wait_time)
+                    try:
+                        await asyncio.wait_for(
+                            self.shutdown_event.wait(), 
+                            timeout=wait_time
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        pass  # Continue normal operation
                 
+            except asyncio.CancelledError:
+                print("Collection loop cancelled")
+                break
             except Exception as e:
                 print(f"✗ Error in collection loop: {e}")
                 await asyncio.sleep(5)
@@ -127,18 +138,20 @@ class CVDCollectorApp:
         
         self.running = True
         
-        # Запускаем два параллельных процесса:
-        # 1. Сбор сделок (каждые 30 секунд)
-        # 2. Агрегация и расчет CVD (каждые 5 минут)
+        # Запускаем два параллельных процесса
+        collection_task = asyncio.create_task(self.collection_loop())
+        aggregation_task = asyncio.create_task(self.aggregator.run_periodic_aggregation())
+        
+        # Передаем shutdown_event в aggregator
+        self.aggregator.shutdown_event = self.shutdown_event
+        
         try:
-            await asyncio.gather(
-                self.collection_loop(),
-                self.aggregator.run_periodic_aggregation()
-            )
+            await asyncio.gather(collection_task, aggregation_task)
         except asyncio.CancelledError:
-            print("\n\nShutting down gracefully...")
+            print("\nShutdown initiated...")
         finally:
             # Закрываем все HTTP сессии
+            print("\nClosing collectors...")
             for collector, _ in self.collectors:
                 await collector.close_session()
             
@@ -147,14 +160,22 @@ class CVDCollectorApp:
     def stop(self):
         """Остановить приложение"""
         self.running = False
+        self.shutdown_event.set()
+
+
+# Глобальная переменная для приложения
+app = None
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для graceful shutdown"""
-    print("\n\n⚠️  Received interrupt signal, shutting down...")
-    sys.exit(0)
+    print("\n\n⚠️  Received interrupt signal, shutting down gracefully...")
+    if app:
+        app.stop()
 
 async def main():
     """Главная функция"""
+    global app
+    
     # Регистрируем обработчик сигналов
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -166,7 +187,8 @@ async def main():
         await app.start()
     except KeyboardInterrupt:
         app.stop()
-        print("\n✓ Application stopped")
+    finally:
+        print("\n✓ Application stopped cleanly")
 
 if __name__ == "__main__":
     # Выводим SQL для создания таблиц
@@ -180,4 +202,7 @@ if __name__ == "__main__":
     input("Press Enter after creating tables in Supabase to continue...")
     
     # Запускаем приложение
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n✓ Shutdown complete")

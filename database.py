@@ -27,6 +27,48 @@ class Database:
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
+
+    def insert_funding_rate(self, funding_data: List[Dict[str, Any]]) -> bool:
+        """Вставка Funding Rate"""
+        try:
+            if not funding_data:
+                return True
+            
+            upsert_headers = self.headers.copy()
+            upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+            
+            response = self.session.post(
+                f"{self.url}/rest/v1/funding_rate",
+                json=funding_data,
+                headers=upsert_headers,
+                timeout=30
+            )
+            
+            return response.status_code in [200, 201, 204, 409]
+        except Exception as e:
+            print(f"✗ Error inserting Funding: {e}")
+            return False
+
+    def insert_open_interest(self, oi_data: List[Dict[str, Any]]) -> bool:
+        """Вставка Open Interest"""
+        try:
+            if not oi_data:
+                return True
+            
+            upsert_headers = self.headers.copy()
+            upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+            
+            response = self.session.post(
+                f"{self.url}/rest/v1/open_interest_5m",
+                json=oi_data,
+                headers=upsert_headers,
+                timeout=30
+            )
+            
+            return response.status_code in [200, 201, 204, 409]
+        except Exception as e:
+            print(f"✗ Error inserting OI: {e}")
+            return False
     
     def insert_trades(self, trades: List[Dict[str, Any]]) -> bool:
         """Вставка сделок в БД"""

@@ -14,6 +14,12 @@ AGGREGATION_INTERVAL = int(os.getenv('AGGREGATION_INTERVAL', 300))  # 5 мину
 # Symbols - только BTC
 SYMBOLS = ['BTCUSDT']
 
+# Метрики
+COLLECT_OI = os.getenv('COLLECT_OI', 'true').lower() == 'true'
+COLLECT_FUNDING = os.getenv('COLLECT_FUNDING', 'true').lower() == 'true'
+COLLECT_LIQUIDATIONS = os.getenv('COLLECT_LIQUIDATIONS', 'true').lower() == 'true'
+COLLECT_LONG_SHORT_RATIO = os.getenv('COLLECT_LONG_SHORT_RATIO', 'true').lower() == 'true'
+
 # Exchange configurations
 EXCHANGES_CONFIG = {
     'binance': {

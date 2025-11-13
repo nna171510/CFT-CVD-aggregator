@@ -13,6 +13,8 @@ from collectors import (
     CoinbaseCollector,
     HyperliquidCollector
 )
+from collectors.oi_collector import OICollector
+from collectors.funding_collector import FundingCollector
 from aggregator import Aggregator
 from cvd_calculator import CVDCalculator
 import utils
@@ -23,6 +25,8 @@ class CVDCollectorApp:
         self.aggregator = Aggregator()
         self.cvd_calc = CVDCalculator()
         self.collectors = []
+        self.oi_collector = OICollector()
+        self.funding_collector = FundingCollector()
         self.running = False
         self.shutdown_event = asyncio.Event()
         
@@ -65,7 +69,6 @@ class CVDCollectorApp:
         for collector, symbols in self.collectors:
             tasks.append(collector.collect(symbols))
         
-        # Собираем параллельно со всех бирж
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in results:
@@ -74,12 +77,30 @@ class CVDCollectorApp:
             else:
                 all_trades.extend(result)
         
-        # Сохраняем в БД
         if all_trades:
             self.db.insert_trades(all_trades)
             utils.print_trade_summary(all_trades)
         
         return len(all_trades)
+    
+    async def collect_metrics_once(self):
+        """Собрать метрики (OI, Funding, Liquidations)"""
+        # Open Interest
+        if config.COLLECT_OI:
+            oi_data = await self.oi_collector.collect_all(config.SYMBOLS)
+            if oi_data:
+                self.db.insert_open_interest(oi_data)
+                print(f"✓ Collected OI: {len(oi_data)} records")
+        
+        # Funding Rate  ← добавить этот блок
+        if config.COLLECT_FUNDING:
+            funding_data = await self.funding_collector.collect_all(config.SYMBOLS)
+            if funding_data:
+                self.db.insert_funding_rate(funding_data)
+                print(f"✓ Collected Funding: {len(funding_data)} records")
+                
+        # TODO: Liquidations (real-time)
+        # TODO: Long/Short Ratio (hourly)
     
     async def collection_loop(self):
         """Основной цикл сбора данных"""
@@ -94,10 +115,10 @@ class CVDCollectorApp:
                 # Собираем сделки
                 trades_count = await self.collect_trades_once()
                 
-                # Вычисляем время выполнения
-                execution_time = asyncio.get_event_loop().time() - start_time
+                # Собираем метрики
+                await self.collect_metrics_once()
                 
-                # Ждем до следующего цикла
+                execution_time = asyncio.get_event_loop().time() - start_time
                 wait_time = max(0, config.COLLECTION_INTERVAL - execution_time)
                 
                 if wait_time > 0:
@@ -107,9 +128,9 @@ class CVDCollectorApp:
                             self.shutdown_event.wait(), 
                             timeout=wait_time
                         )
-                        break  # Shutdown requested
+                        break
                     except asyncio.TimeoutError:
-                        pass  # Continue normal operation
+                        pass
                 
             except asyncio.CancelledError:
                 print("Collection loop cancelled")
@@ -125,11 +146,9 @@ class CVDCollectorApp:
         print(f"Configuration: BTC only, 5-minute aggregation")
         print(f"{'='*80}\n")
         
-        # Проверяем конфигурацию
         if not utils.validate_config():
             return
         
-        # Инициализируем коллекторы
         self.initialize_collectors()
         
         if not self.collectors:
@@ -138,11 +157,9 @@ class CVDCollectorApp:
         
         self.running = True
         
-        # Запускаем два параллельных процесса
         collection_task = asyncio.create_task(self.collection_loop())
         aggregation_task = asyncio.create_task(self.aggregator.run_periodic_aggregation())
         
-        # Передаем shutdown_event в aggregator
         self.aggregator.shutdown_event = self.shutdown_event
         
         try:
@@ -150,11 +167,10 @@ class CVDCollectorApp:
         except asyncio.CancelledError:
             print("\nShutdown initiated...")
         finally:
-            # Закрываем все HTTP сессии
             print("\nClosing collectors...")
             for collector, _ in self.collectors:
                 await collector.close_session()
-            
+            await self.oi_collector.close_session()  # добавлено
             print("✓ All collectors closed")
     
     def stop(self):
@@ -163,7 +179,6 @@ class CVDCollectorApp:
         self.shutdown_event.set()
 
 
-# Глобальная переменная для приложения
 app = None
 
 def signal_handler(signum, frame):
@@ -176,11 +191,9 @@ async def main():
     """Главная функция"""
     global app
     
-    # Регистрируем обработчик сигналов
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Создаем и запускаем приложение
     app = CVDCollectorApp()
     
     try:
@@ -191,17 +204,6 @@ async def main():
         print("\n✓ Application stopped cleanly")
 
 if __name__ == "__main__":
-    # Выводим SQL для создания таблиц
-    # print("\n" + "="*80)
-    # print("SUPABASE TABLE SETUP")
-    # print("="*80)
-    # print("\nRun this SQL in your Supabase SQL Editor:\n")
-    # print(utils.create_supabase_tables_sql())
-    # print("="*80 + "\n")
-    
-    # input("Press Enter after creating tables in Supabase to continue...")
-    
-    # Запускаем приложение
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

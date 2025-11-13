@@ -20,6 +20,11 @@ COLLECT_FUNDING = os.getenv('COLLECT_FUNDING', 'true').lower() == 'true'
 COLLECT_LIQUIDATIONS = os.getenv('COLLECT_LIQUIDATIONS', 'true').lower() == 'true'
 COLLECT_LONG_SHORT_RATIO = os.getenv('COLLECT_LONG_SHORT_RATIO', 'true').lower() == 'true'
 
+# Large Orders settings
+LARGE_ORDERS_PRICE_STEP = float(os.getenv('LARGE_ORDERS_PRICE_STEP', '50.0'))
+LARGE_ORDERS_INTERVAL = int(os.getenv('LARGE_ORDERS_INTERVAL', '60'))
+LARGE_ORDERS_PRICE_FILTER_PCT = float(os.getenv('LARGE_ORDERS_PRICE_FILTER_PCT', '0.1'))  # 10% around current price
+
 # Exchange configurations
 EXCHANGES_CONFIG = {
     'binance': {

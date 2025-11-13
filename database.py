@@ -28,6 +28,76 @@ class Database:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
+    def insert_large_orders(self, orders_data: List[Dict[str, Any]]) -> bool:
+        """Вставка Large Limit Orders"""
+        try:
+            if not orders_data:
+                return True
+            
+            insert_headers = self.headers.copy()
+            insert_headers['Prefer'] = 'return=minimal'
+            
+            response = self.session.post(
+                f"{self.url}/rest/v1/large_limit_orders",
+                json=orders_data,
+                headers=insert_headers,
+                timeout=30
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                print(f"✓ Inserted {len(orders_data)} order book levels")
+                return True
+            return False
+        except Exception as e:
+            print(f"✗ Error inserting Large Orders: {e}")
+            return False
+    
+    def insert_liquidations(self, liq_data: List[Dict[str, Any]]) -> bool:
+        """Вставка Liquidations"""
+        try:
+            if not liq_data:
+                return True
+            
+            # Liquidations без upsert, просто добавляем новые
+            insert_headers = self.headers.copy()
+            insert_headers['Prefer'] = 'return=minimal'
+            
+            response = self.session.post(
+                f"{self.url}/rest/v1/liquidations",
+                json=liq_data,
+                headers=insert_headers,
+                timeout=30
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                print(f"✓ Inserted {len(liq_data)} liquidations")
+                return True
+            return False
+        except Exception as e:
+            print(f"✗ Error inserting Liquidations: {e}")
+            return False
+
+    def insert_long_short_ratio(self, ls_data: List[Dict[str, Any]]) -> bool:
+        """Вставка Long/Short Ratio"""
+        try:
+            if not ls_data:
+                return True
+            
+            upsert_headers = self.headers.copy()
+            upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+            
+            response = self.session.post(
+                f"{self.url}/rest/v1/long_short_ratio",
+                json=ls_data,
+                headers=upsert_headers,
+                timeout=30
+            )
+            
+            return response.status_code in [200, 201, 204, 409]
+        except Exception as e:
+            print(f"✗ Error inserting LS Ratio: {e}")
+            return False
+
     def insert_funding_rate(self, funding_data: List[Dict[str, Any]]) -> bool:
         """Вставка Funding Rate"""
         try:

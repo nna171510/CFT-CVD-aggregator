@@ -165,6 +165,8 @@ class Database:
     def calculate_cvd(self, exchange: str, market_type: str, symbol: str) -> bool:
         """Расчет CVD"""
         try:
+            print(f"🔄 Starting CVD calculation for {exchange} {market_type} {symbol}")
+            
             # Получаем все дельты по порядку
             response = self.session.get(
                 f"{self.url}/rest/v1/volume_delta_5m",
@@ -186,7 +188,10 @@ class Database:
             data = response.json()
             
             if not data:
+                print(f"⚠️  No delta data found for {exchange} {market_type} {symbol}")
                 return True
+            
+            print(f"📊 Found {len(data)} delta records for {exchange} {market_type} {symbol}")
             
             # Считаем кумулятивную сумму
             cvd = 0
@@ -203,32 +208,46 @@ class Database:
                     'delta': str(row['delta'])
                 })
             
+            print(f"📈 Calculated {len(cvd_records)} CVD records, final CVD: {cvd:.4f}")
+            
             # Вставляем CVD батчами по 100 записей с upsert
             if cvd_records:
                 batch_size = 100
+                total_inserted = 0
+                
                 for i in range(0, len(cvd_records), batch_size):
                     batch = cvd_records[i:i+batch_size]
                     
                     upsert_headers = self.headers.copy()
                     upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
                     
-                    response = self.session.post(
-                        f"{self.url}/rest/v1/cvd_5m",
-                        json=batch,
-                        headers=upsert_headers,
-                        timeout=30
-                    )
-                    
-                    if response.status_code not in [200, 201, 204, 409]:
-                        print(f"✗ Error calculating CVD batch: {response.status_code} - {response.text}")
-                        return False
+                    try:
+                        response = self.session.post(
+                            f"{self.url}/rest/v1/cvd_5m",
+                            json=batch,
+                            headers=upsert_headers,
+                            timeout=30
+                        )
+                        
+                        if response.status_code in [200, 201, 204, 409]:
+                            total_inserted += len(batch)
+                            print(f"  ✓ Batch {i//batch_size + 1}: inserted/updated {len(batch)} records")
+                        else:
+                            print(f"  ✗ Batch {i//batch_size + 1} error: {response.status_code} - {response.text}")
+                            # Продолжаем с остальными батчами
+                            
+                    except Exception as e:
+                        print(f"  ✗ Batch {i//batch_size + 1} exception: {e}")
+                        continue
                 
-                print(f"✓ Calculated CVD for {exchange} {market_type} {symbol}: {cvd:.2f}")
+                print(f"✓ CVD calculation complete: {total_inserted}/{len(cvd_records)} records processed")
             
             return True
             
         except Exception as e:
             print(f"✗ Error calculating CVD: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def get_cvd_data(self, exchange: str, market_type: str, symbol: str, 

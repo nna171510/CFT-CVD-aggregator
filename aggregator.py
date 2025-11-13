@@ -7,7 +7,7 @@ import config
 class Aggregator:
     def __init__(self):
         self.db = Database()
-        self.shutdown_event = None  # Будет установлено из main.py
+        self.shutdown_event = None
     
     def get_5min_boundaries(self, timestamp_ms: int = None):
         """Получить границы текущих 5 минут"""
@@ -33,6 +33,9 @@ class Aggregator:
         
         print(f"Aggregating period: {datetime.fromtimestamp(prev_interval_start/1000, tz=timezone.utc)} to {datetime.fromtimestamp(prev_interval_end/1000, tz=timezone.utc)}")
         
+        # Используем единый нормализованный символ для всех бирж
+        normalized_symbol = 'BTCUSDT'
+        
         # Проходим по всем биржам
         for exchange_name, markets in config.EXCHANGES_CONFIG.items():
             for market_type, market_config in markets.items():
@@ -44,28 +47,23 @@ class Aggregator:
                     print("Aggregation cancelled by shutdown")
                     return
                 
-                # Проходим по всем символам (только BTC)
-                for symbol in market_config['symbols']:
-                    # Нормализуем символ к формату BTCUSDT
-                    normalized_symbol = 'BTCUSDT'
+                try:
+                    success = self.db.aggregate_5min_delta(
+                        exchange=exchange_name,
+                        market_type=market_type,
+                        symbol=normalized_symbol,  # Используем нормализованный символ
+                        start_time=prev_interval_start,
+                        end_time=prev_interval_end
+                    )
                     
-                    try:
-                        success = self.db.aggregate_5min_delta(
-                            exchange=exchange_name,
-                            market_type=market_type,
-                            symbol=normalized_symbol,
-                            start_time=prev_interval_start,
-                            end_time=prev_interval_end
-                        )
-                        
-                        if success:
-                            # После агрегации пересчитываем CVD
-                            self.db.calculate_cvd(exchange_name, market_type, normalized_symbol)
-                        
-                        await asyncio.sleep(0.1)
-                        
-                    except Exception as e:
-                        print(f"✗ Error aggregating {exchange_name} {market_type} {normalized_symbol}: {e}")
+                    if success:
+                        # После агрегации пересчитываем CVD
+                        self.db.calculate_cvd(exchange_name, market_type, normalized_symbol)
+                    
+                    await asyncio.sleep(0.1)
+                    
+                except Exception as e:
+                    print(f"✗ Error aggregating {exchange_name} {market_type} {normalized_symbol}: {e}")
         
         print(f"{'='*60}")
         print(f"Aggregation completed")
@@ -96,11 +94,11 @@ class Aggregator:
                             self.shutdown_event.wait(),
                             timeout=wait_time
                         )
-                        break  # Shutdown requested
+                        break
                     else:
                         await asyncio.sleep(wait_time)
                 except asyncio.TimeoutError:
-                    pass  # Continue with aggregation
+                    pass
                 
                 # Запускаем агрегацию
                 await self.aggregate_all()

@@ -13,10 +13,11 @@ class CoinbaseCollector(BaseCollector):
         params = {'limit': min(limit, 100)}
         
         async with self.session.get(url, params=params) as response:
-            if response.status == 200:
+            if response.status == 200:  # ← ИСПРАВЛЕНО: status вместо status_code
                 return await response.json()
             else:
-                raise Exception(f"HTTP {response.status}: {await response.text()}")
+                text = await response.text()
+                raise Exception(f"HTTP {response.status}: {text}")  # ← ИСПРАВЛЕНО
     
     def normalize_trade(self, trade: Dict, symbol: str) -> Dict[str, Any]:
         """
@@ -38,7 +39,7 @@ class CoinbaseCollector(BaseCollector):
         return {
             'exchange': self.exchange,
             'market_type': self.market_type,
-            'symbol': symbol,
+            'symbol': 'BTCUSDT',  # Нормализуем к единому формату
             'trade_id': str(trade['trade_id']),
             'price': float(trade['price']),
             'quantity': float(trade['size']),

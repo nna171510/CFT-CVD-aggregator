@@ -194,3 +194,27 @@ class LargeOrdersCollector:
         except Exception as e:
             print(f"✗ Coinbase Orderbook error: {e}")
         return []
+    
+    async def collect_all(self, symbols: List[str]) -> List[Dict[str, Any]]:
+        """Собрать Large Orders со всех бирж"""
+        await self.init_session()
+        results = []
+        
+        for symbol in symbols:
+            # Binance
+            orders = await self.fetch_binance_orderbook(symbol)
+            if orders:
+                results.extend(orders)
+            
+            # Bybit (закомментировано)
+            # orders = await self.fetch_bybit_orderbook(symbol)
+            # if orders:
+            #     results.extend(orders)
+            
+            # Coinbase (symbol format: BTC-USD)
+            if symbol == 'BTCUSDT':
+                orders = await self.fetch_coinbase_orderbook('BTC-USD')
+                if orders:
+                    results.extend(orders)
+        
+        return results

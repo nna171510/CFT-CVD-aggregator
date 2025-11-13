@@ -162,6 +162,9 @@ class CVDCollectorApp:
 
     async def collect_orderbook_once(self):
         """Собрать orderbook (раз в минуту)"""
+        if not config.COLLECT_LARGE_ORDERS:
+            return
+    
         current_time = time.time()
         if current_time - self.last_orderbook_collection < config.LARGE_ORDERS_INTERVAL:
             return

@@ -29,11 +29,27 @@ class Database:
         self.session.mount("http://", adapter)
 
     def insert_large_orders(self, orders_data: List[Dict[str, Any]]) -> bool:
-        """Вставка Large Limit Orders"""
+        """Вставка Large Limit Orders с очисткой старых данных"""
         try:
             if not orders_data:
                 return True
             
+            # Группируем по биржам для удаления старых данных
+            exchanges = set(order['exchange'] for order in orders_data)
+            
+            # Удаляем старые данные для каждой биржи
+            for exchange in exchanges:
+                try:
+                    delete_response = self.session.delete(
+                        f"{self.url}/rest/v1/large_limit_orders",
+                        headers=self.headers,
+                        params={'exchange': f'eq.{exchange}'},
+                        timeout=10
+                    )
+                except Exception as e:
+                    print(f"⚠️  Warning: could not delete old {exchange} orders: {e}")
+            
+            # Вставляем свежие данные
             insert_headers = self.headers.copy()
             insert_headers['Prefer'] = 'return=minimal'
             

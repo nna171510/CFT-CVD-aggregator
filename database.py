@@ -34,9 +34,8 @@ class Database:
             if not trades:
                 return True
             
-            # Supabase upsert через POST с заголовком resolution=merge-duplicates
             upsert_headers = self.headers.copy()
-            upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+            upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=representation'  # изменено
             
             response = self.session.post(
                 f"{self.url}/rest/v1/trades",
@@ -46,11 +45,12 @@ class Database:
             )
             
             if response.status_code in [200, 201, 204]:
-                print(f"✓ Processed {len(trades)} trades (new + duplicates skipped)")
+                inserted = len(response.json()) if response.text else 0
+                duplicates = len(trades) - inserted
+                print(f"✓ Processed {len(trades)} trades ({inserted} new, {duplicates} duplicates)")
                 return True
             elif response.status_code == 409:
-                # Конфликт дубликатов - это нормально
-                print(f"✓ Processed {len(trades)} trades (duplicates skipped)")
+                print(f"✓ Processed {len(trades)} trades (0 new, {len(trades)} duplicates)")
                 return True
             else:
                 print(f"✗ Error inserting trades: {response.status_code} - {response.text}")
@@ -163,11 +163,38 @@ class Database:
             return False
     
     def calculate_cvd(self, exchange: str, market_type: str, symbol: str) -> bool:
-        """Расчет CVD"""
+        """
+        Расчет CVD - инкрементально добавляет новые записи
+        """
         try:
             print(f"🔄 Starting CVD calculation for {exchange} {market_type} {symbol}")
             
-            # Получаем все дельты по порядку
+            # Получаем последнюю CVD запись для этой биржи
+            last_cvd_response = self.session.get(
+                f"{self.url}/rest/v1/cvd_5m",
+                headers=self.headers,
+                params={
+                    'exchange': f'eq.{exchange}',
+                    'market_type': f'eq.{market_type}',
+                    'symbol': f'eq.{symbol}',
+                    'select': 'timestamp,cvd',
+                    'order': 'timestamp.desc',
+                    'limit': 1
+                },
+                timeout=30
+            )
+            
+            last_cvd = 0
+            last_timestamp = 0
+            
+            if last_cvd_response.status_code == 200:
+                last_data = last_cvd_response.json()
+                if last_data:
+                    last_cvd = float(last_data[0]['cvd'])
+                    last_timestamp = int(last_data[0]['timestamp'])
+                    print(f"📊 Last CVD: {last_cvd:.4f} at timestamp {last_timestamp}")
+            
+            # Получаем все дельты ПОСЛЕ последнего обработанного timestamp
             response = self.session.get(
                 f"{self.url}/rest/v1/volume_delta_5m",
                 headers=self.headers,
@@ -175,6 +202,7 @@ class Database:
                     'exchange': f'eq.{exchange}',
                     'market_type': f'eq.{market_type}',
                     'symbol': f'eq.{symbol}',
+                    'timestamp': f'gt.{last_timestamp}',  # больше чем последний
                     'select': 'timestamp,delta',
                     'order': 'timestamp.asc'
                 },
@@ -185,21 +213,21 @@ class Database:
                 print(f"✗ Error fetching deltas: {response.status_code}")
                 return True
             
-            data = response.json()
+            new_deltas = response.json()
             
-            if not data:
-                print(f"⚠️  No delta data found for {exchange} {market_type} {symbol}")
+            if not new_deltas:
+                print(f"✓ No new deltas to process for {exchange} {market_type} {symbol}")
                 return True
             
-            print(f"📊 Found {len(data)} delta records for {exchange} {market_type} {symbol}")
+            print(f"📊 Found {len(new_deltas)} new delta records to process")
             
-            # Считаем кумулятивную сумму
-            cvd = 0
-            cvd_records = []
+            # Считаем новые CVD записи инкрементально
+            cvd = last_cvd
+            new_cvd_records = []
             
-            for row in data:
+            for row in new_deltas:
                 cvd += float(row['delta'])
-                cvd_records.append({
+                new_cvd_records.append({
                     'exchange': exchange,
                     'market_type': market_type,
                     'symbol': symbol,
@@ -208,39 +236,43 @@ class Database:
                     'delta': str(row['delta'])
                 })
             
-            print(f"📈 Calculated {len(cvd_records)} CVD records, final CVD: {cvd:.4f}")
+            print(f"📈 Calculated {len(new_cvd_records)} new CVD records, current CVD: {cvd:.4f}")
             
-            # Вставляем CVD батчами по 100 записей с upsert
-            if cvd_records:
+            # Вставляем новые CVD записи батчами по 100
+            if new_cvd_records:
                 batch_size = 100
                 total_inserted = 0
                 
-                for i in range(0, len(cvd_records), batch_size):
-                    batch = cvd_records[i:i+batch_size]
+                for i in range(0, len(new_cvd_records), batch_size):
+                    batch = new_cvd_records[i:i+batch_size]
                     
-                    upsert_headers = self.headers.copy()
-                    upsert_headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+                    # Используем обычный INSERT
+                    insert_headers = self.headers.copy()
+                    insert_headers['Prefer'] = 'return=minimal'
                     
                     try:
                         response = self.session.post(
                             f"{self.url}/rest/v1/cvd_5m",
                             json=batch,
-                            headers=upsert_headers,
+                            headers=insert_headers,
                             timeout=30
                         )
                         
-                        if response.status_code in [200, 201, 204, 409]:
+                        if response.status_code in [200, 201, 204]:
                             total_inserted += len(batch)
-                            print(f"  ✓ Batch {i//batch_size + 1}: inserted/updated {len(batch)} records")
+                            print(f"  ✓ Batch {i//batch_size + 1}: inserted {len(batch)} records")
+                        elif response.status_code == 409:
+                            # Конфликт - записи уже существуют
+                            print(f"  ⚠️  Batch {i//batch_size + 1}: records already exist (skipped)")
+                            total_inserted += len(batch)
                         else:
                             print(f"  ✗ Batch {i//batch_size + 1} error: {response.status_code} - {response.text}")
-                            # Продолжаем с остальными батчами
                             
                     except Exception as e:
                         print(f"  ✗ Batch {i//batch_size + 1} exception: {e}")
                         continue
                 
-                print(f"✓ CVD calculation complete: {total_inserted}/{len(cvd_records)} records processed")
+                print(f"✓ CVD calculation complete: {total_inserted}/{len(new_cvd_records)} records inserted")
             
             return True
             

@@ -192,14 +192,14 @@ async def main():
 
 if __name__ == "__main__":
     # Выводим SQL для создания таблиц
-    print("\n" + "="*80)
-    print("SUPABASE TABLE SETUP")
-    print("="*80)
-    print("\nRun this SQL in your Supabase SQL Editor:\n")
-    print(utils.create_supabase_tables_sql())
-    print("="*80 + "\n")
+    # print("\n" + "="*80)
+    # print("SUPABASE TABLE SETUP")
+    # print("="*80)
+    # print("\nRun this SQL in your Supabase SQL Editor:\n")
+    # print(utils.create_supabase_tables_sql())
+    # print("="*80 + "\n")
     
-    input("Press Enter after creating tables in Supabase to continue...")
+    # input("Press Enter after creating tables in Supabase to continue...")
     
     # Запускаем приложение
     try:

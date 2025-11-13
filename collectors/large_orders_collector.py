@@ -55,9 +55,14 @@ class LargeOrdersCollector:
         max_price = mid_price * (1 + self.price_filter_pct)
         return [(p, q) for p, q in orders if min_price <= p <= max_price]
     
-    async def fetch_binance_orderbook(self, symbol: str) -> List[Dict[str, Any]]:
+    async def fetch_binance_orderbook(self, symbol: str, market_type: str = 'futures') -> List[Dict[str, Any]]:
         """Binance Order Book"""
-        url = 'https://fapi.binance.com/fapi/v1/depth'
+        # Spot или Futures URL
+        if market_type == 'spot':
+            url = 'https://api.binance.com/api/v3/depth'
+        else:
+            url = 'https://fapi.binance.com/fapi/v1/depth'
+        
         params = {'symbol': symbol, 'limit': 1000}
         
         try:
@@ -84,6 +89,7 @@ class LargeOrdersCollector:
                     for order in bids_agg + asks_agg:
                         results.append({
                             'exchange': 'binance',
+                            'market_type': market_type,
                             'symbol': symbol,
                             'side': order['side'],
                             'price_level': order['price_level'],
@@ -95,7 +101,7 @@ class LargeOrdersCollector:
                     
                     return results
         except Exception as e:
-            print(f"✗ Binance Orderbook error: {e}")
+            print(f"✗ Binance {market_type} Orderbook error: {e}")
         return []
     
     async def fetch_bybit_orderbook(self, symbol: str) -> List[Dict[str, Any]]:
@@ -181,6 +187,7 @@ class LargeOrdersCollector:
                     for order in bids_agg + asks_agg:
                         results.append({
                             'exchange': 'coinbase',
+                            'market_type': 'spot',  # ← добавлено
                             'symbol': 'BTCUSDT',
                             'side': order['side'],
                             'price_level': order['price_level'],
@@ -201,17 +208,17 @@ class LargeOrdersCollector:
         results = []
         
         for symbol in symbols:
-            # Binance
-            orders = await self.fetch_binance_orderbook(symbol)
+            # Binance Spot
+            orders = await self.fetch_binance_orderbook(symbol, 'spot')
             if orders:
                 results.extend(orders)
             
-            # Bybit (закомментировано)
-            # orders = await self.fetch_bybit_orderbook(symbol)
-            # if orders:
-            #     results.extend(orders)
+            # Binance Futures
+            orders = await self.fetch_binance_orderbook(symbol, 'futures')
+            if orders:
+                results.extend(orders)
             
-            # Coinbase (symbol format: BTC-USD)
+            # Coinbase (только spot)
             if symbol == 'BTCUSDT':
                 orders = await self.fetch_coinbase_orderbook('BTC-USD')
                 if orders:

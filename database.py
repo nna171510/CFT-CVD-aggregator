@@ -220,9 +220,9 @@ class Database:
             print(f"✗ Error getting last timestamp: {e}")
             return 0
     
-    def aggregate_5min_delta(self, exchange: str, market_type: str, symbol: str, 
+    def aggregate_delta(self, exchange: str, market_type: str, symbol: str, 
                              start_time: int, end_time: int) -> bool:
-        """Агрегация дельты за 5 минут"""
+        """Агрегация дельты за n минут"""
         try:
             # Получаем сделки за период
             response = self.session.get(
@@ -253,8 +253,8 @@ class Database:
             delta = buy_volume - sell_volume
             total_volume = buy_volume + sell_volume
             
-            # Округляем timestamp до начала 5-минутки
-            interval_timestamp = (start_time // 300000) * 300000
+            # Округляем timestamp до начала n минутки
+            interval_timestamp = (start_time // (config.AGGREGATION_INTERVAL * 1000)) * (config.AGGREGATION_INTERVAL * 1000)
             
             # Вставляем агрегированные данные
             agg_data = {
@@ -281,6 +281,24 @@ class Database:
             
             if response.status_code in [200, 201, 204, 409]:
                 print(f"✓ Aggregated {len(trades)} trades for {exchange} {market_type} {symbol}")
+                # Удаляем обработанные сделки
+                delete_response = self.session.delete(
+                    f"{self.url}/rest/v1/trades",
+                    headers=self.headers,
+                    params={
+                        'exchange': f'eq.{exchange}',
+                        'market_type': f'eq.{market_type}',
+                        'symbol': f'eq.{symbol}',
+                        'timestamp': f'gte.{start_time}',
+                        'timestamp': f'lt.{end_time}'
+                    },
+                    timeout=30
+                )
+                
+                if delete_response.status_code in [200, 204]:
+                    print(f"  ✓ Deleted {len(trades)} processed trades")
+                else:
+                    print(f"  ⚠️  Warning: could not delete trades: {delete_response.status_code}")
                 return True
             else:
                 print(f"✗ Error aggregating: {response.status_code} - {response.text}")

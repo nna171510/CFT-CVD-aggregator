@@ -8,15 +8,16 @@ class Aggregator:
     def __init__(self):
         self.db = Database()
         self.shutdown_event = None
+        self.interval_ms = config.AGGREGATION_INTERVAL * 1000  # 60 сек → 60000 мс
+        self.interval_sec = config.AGGREGATION_INTERVAL  # 60 сек
     
-    def get_5min_boundaries(self, timestamp_ms: int = None):
-        """Получить границы текущих 5 минут"""
+    def get_boundaries(self, timestamp_ms: int = None):
+        """Получить границы текущего интервала"""
         if timestamp_ms is None:
             timestamp_ms = int(time.time() * 1000)
         
-        # Округляем до начала 5-минутки (300000 ms = 5 минут)
-        interval_start = (timestamp_ms // 300000) * 300000
-        interval_end = interval_start + 300000
+        interval_start = (timestamp_ms // self.interval_ms) * self.interval_ms
+        interval_end = interval_start + self.interval_ms
         
         return interval_start, interval_end
     
@@ -28,8 +29,8 @@ class Aggregator:
         
         # Получаем границы предыдущих 5 минут (завершенных)
         current_time = int(time.time() * 1000)
-        prev_interval_end = (current_time // 300000) * 300000
-        prev_interval_start = prev_interval_end - 300000
+        prev_interval_end = (current_time // self.interval_ms) * self.interval_ms
+        prev_interval_start = prev_interval_end - self.interval_ms
         
         print(f"Aggregating period: {datetime.fromtimestamp(prev_interval_start/1000, tz=timezone.utc)} to {datetime.fromtimestamp(prev_interval_end/1000, tz=timezone.utc)}")
         
@@ -48,7 +49,7 @@ class Aggregator:
                     return
                 
                 try:
-                    success = self.db.aggregate_5min_delta(
+                    success = self.db.aggregate_delta(
                         exchange=exchange_name,
                         market_type=market_type,
                         symbol=normalized_symbol,  # Используем нормализованный символ
@@ -70,7 +71,7 @@ class Aggregator:
         print(f"{'='*60}\n")
     
     async def run_periodic_aggregation(self):
-        """Запустить периодическую агрегацию каждые 5 минут"""
+        """Запустить периодическую агрегацию каждые n минут"""
         while True:
             try:
                 # Проверяем shutdown event
@@ -80,10 +81,10 @@ class Aggregator:
                 
                 # Ждем до следующих 5 минут
                 current_time = int(time.time())
-                seconds_until_next_interval = 300 - (current_time % 300)
+                seconds_until_next_interval = self.interval_sec - (current_time % self.interval_sec)
                 
-                # Добавляем небольшую задержку после начала интервала (10 секунд)
-                wait_time = seconds_until_next_interval + 10
+                # Добавляем небольшую задержку после начала интервала (5 секунд)
+                wait_time = seconds_until_next_interval + 5
                 
                 print(f"⏰ Next aggregation in {wait_time} seconds ({wait_time//60}m {wait_time%60}s)")
                 

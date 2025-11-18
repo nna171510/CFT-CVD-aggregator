@@ -9,14 +9,26 @@ class BinanceCollector(BaseCollector):
     
     async def fetch_trades(self, symbol: str, limit: int = 1000) -> List[Dict[str, Any]]:
         """Получить сделки с Binance"""
+        
+        # Получаем timestamp последней сделки
+        last_timestamp = self.get_last_timestamp(symbol)
+        
         params = {
             'symbol': symbol,
             'limit': min(limit, 1000)
         }
         
+        # Если есть последняя сделка, запрашиваем только новые
+        if last_timestamp > 0:
+            params['startTime'] = last_timestamp + 1  # +1 мс чтобы не дублировать последнюю
+        
         async with self.session.get(self.url, params=params) as response:
             if response.status == 200:
-                return await response.json()
+                trades = await response.json()
+                # Если получили пустой ответ и есть last_timestamp, возвращаем пустой список
+                if not trades and last_timestamp > 0:
+                    return []
+                return trades
             else:
                 raise Exception(f"HTTP {response.status}: {await response.text()}")
     
@@ -41,6 +53,6 @@ class BinanceCollector(BaseCollector):
             'trade_id': str(trade['a']),
             'price': float(trade['p']),
             'quantity': float(trade['q']),
-            'side': 'sell' if trade['m'] else 'buy',  # m=true означает продажу
+            'side': 'sell' if trade['m'] else 'buy',
             'timestamp': int(trade['T'])
         }

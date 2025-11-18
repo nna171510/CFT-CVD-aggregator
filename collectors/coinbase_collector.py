@@ -9,15 +9,33 @@ class CoinbaseCollector(BaseCollector):
     
     async def fetch_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Получить сделки с Coinbase"""
+        
+        # Coinbase API не поддерживает фильтрацию по времени в /trades
+        # Получаем последние и фильтруем локально
         url = f"{self.base_url}/{symbol}/trades"
         params = {'limit': min(limit, 100)}
         
         async with self.session.get(url, params=params) as response:
-            if response.status == 200:  # ← ИСПРАВЛЕНО: status вместо status_code
-                return await response.json()
+            if response.status == 200:
+                trades = await response.json()
+                
+                # Фильтруем по последнему timestamp
+                last_timestamp = self.get_last_timestamp('BTCUSDT')  # нормализованный символ
+                
+                if last_timestamp > 0:
+                    from dateutil import parser
+                    filtered_trades = []
+                    for trade in trades:
+                        dt = parser.parse(trade['time'])
+                        trade_timestamp = int(dt.timestamp() * 1000)
+                        if trade_timestamp > last_timestamp:
+                            filtered_trades.append(trade)
+                    return filtered_trades
+                
+                return trades
             else:
                 text = await response.text()
-                raise Exception(f"HTTP {response.status}: {text}")  # ← ИСПРАВЛЕНО
+                raise Exception(f"HTTP {response.status}: {text}")
     
     def normalize_trade(self, trade: Dict, symbol: str) -> Dict[str, Any]:
         """
@@ -27,19 +45,18 @@ class CoinbaseCollector(BaseCollector):
             "trade_id": 123456789,
             "price": "50000.00",
             "size": "0.05",
-            "side": "buy"  # buy or sell
+            "side": "buy"
         }
         """
         from dateutil import parser
         
-        # Конвертируем ISO timestamp в milliseconds
         dt = parser.parse(trade['time'])
         timestamp_ms = int(dt.timestamp() * 1000)
         
         return {
             'exchange': self.exchange,
             'market_type': self.market_type,
-            'symbol': 'BTCUSDT',  # Нормализуем к единому формату
+            'symbol': 'BTCUSDT',
             'trade_id': str(trade['trade_id']),
             'price': float(trade['price']),
             'quantity': float(trade['size']),

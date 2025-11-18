@@ -8,16 +8,27 @@ class BaseCollector(ABC):
         self.exchange = exchange
         self.market_type = market_type
         self.session = None
+        self.db = None
     
     async def init_session(self):
         """Инициализация HTTP сессии"""
         if not self.session:
             self.session = aiohttp.ClientSession()
+        
+        if not self.db:
+            from database import Database
+            self.db = Database()
     
     async def close_session(self):
         """Закрытие HTTP сессии"""
         if self.session:
             await self.session.close()
+    
+    def get_last_timestamp(self, symbol: str) -> int:
+        """Получить timestamp последней сделки из БД"""
+        if self.db:
+            return self.db.get_last_trade_timestamp(self.exchange, self.market_type, symbol)
+        return 0
     
     @abstractmethod
     async def fetch_trades(self, symbol: str, limit: int = 1000) -> List[Dict[str, Any]]:

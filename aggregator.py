@@ -83,8 +83,8 @@ class Aggregator:
                 current_time = int(time.time())
                 seconds_until_next_interval = self.interval_sec - (current_time % self.interval_sec)
                 
-                # Добавляем небольшую задержку после начала интервала (5 секунд)
-                wait_time = seconds_until_next_interval + 5
+                # Добавляем небольшую задержку после начала интервала (2 секунд)
+                wait_time = seconds_until_next_interval + 2
                 
                 print(f"⏰ Next aggregation in {wait_time} seconds ({wait_time//60}m {wait_time%60}s)")
                 

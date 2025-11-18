@@ -179,7 +179,10 @@ class CVDCollectorApp:
         """Запустить приложение"""
         print(f"\n{'='*80}")
         print(f"CVD Collector Starting - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        print(f"Configuration: BTC only, 5-minute aggregation")
+        print(f"Configuration:")
+        print(f"  - Symbols: {', '.join(config.SYMBOLS)}")
+        print(f"  - Collection interval: {config.COLLECTION_INTERVAL}s")
+        print(f"  - Aggregation interval: {config.AGGREGATION_INTERVAL}s")
         print(f"{'='*80}\n")
         
         if not utils.validate_config():

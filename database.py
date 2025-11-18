@@ -282,6 +282,9 @@ class Database:
             if response.status_code in [200, 201, 204, 409]:
                 print(f"✓ Aggregated {len(trades)} trades for {exchange} {market_type} {symbol}")
                 # Удаляем обработанные сделки
+                # Удаляем только трейды СТАРШЕ 2 минут (чтобы был запас)
+                delete_cutoff_time = start_time - (config.AGGREGATION_INTERVAL * 1000)
+
                 delete_response = self.session.delete(
                     f"{self.url}/rest/v1/trades",
                     headers=self.headers,
@@ -289,11 +292,10 @@ class Database:
                         'exchange': f'eq.{exchange}',
                         'market_type': f'eq.{market_type}',
                         'symbol': f'eq.{symbol}',
-                        'timestamp': f'gte.{start_time}',
-                        'timestamp': f'lt.{end_time}'
+                        'timestamp': f'lt.{delete_cutoff_time}'
                     },
                     timeout=30
-                )
+)
                 
                 if delete_response.status_code in [200, 204]:
                     print(f"  ✓ Deleted {len(trades)} processed trades")

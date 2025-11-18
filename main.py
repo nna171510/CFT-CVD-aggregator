@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import config
 from database import Database
 from collectors import (
-    BinanceCollector, 
+    BinanceCollector,
+    BinanceWSCollector,
     BybitCollector, 
     OKXCollector, 
     CoinbaseCollector,
@@ -30,6 +31,10 @@ class CVDCollectorApp:
         self.aggregator = Aggregator()
         self.cvd_calc = CVDCalculator()
         self.collectors = []
+        self.ws_collectors = []
+        self.ws_tasks = []
+        self.trade_buffer = []
+        self.buffer_lock = asyncio.Lock()
         self.oi_collector = OICollector()
         self.funding_collector = FundingCollector()
         self.ls_ratio_collector = LSRatioCollector()
@@ -42,6 +47,7 @@ class CVDCollectorApp:
     def initialize_collectors(self):
         """Инициализировать коллекторы для всех включенных бирж"""
         print("Initializing collectors...")
+        print(f"Mode: {'WebSocket' if config.USE_WEBSOCKET else 'REST API'}")
         
         for exchange_name, markets in config.EXCHANGES_CONFIG.items():
             for market_type, market_config in markets.items():
@@ -49,27 +55,67 @@ class CVDCollectorApp:
                     continue
                 
                 try:
-                    if exchange_name == 'binance':
+                    # WebSocket mode для Binance
+                    if config.USE_WEBSOCKET and exchange_name == 'binance':
+                        collector = BinanceWSCollector(market_type, market_config)
+                        collector.set_trade_callback(self.on_trade_received)
+                        self.ws_collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} WebSocket collector")
+                    
+                    # REST API mode (старый метод)
+                    elif exchange_name == 'binance':
                         collector = BinanceCollector(market_type, market_config)
+                        self.collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} REST collector")
+                    
+                    # Остальные биржи пока только REST
                     elif exchange_name == 'bybit':
                         collector = BybitCollector(market_type, market_config)
+                        self.collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} collector")
                     elif exchange_name == 'okx':
                         collector = OKXCollector(market_type, market_config)
+                        self.collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} collector")
                     elif exchange_name == 'coinbase':
                         collector = CoinbaseCollector(market_type, market_config)
+                        self.collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} collector")
                     elif exchange_name == 'hyperliquid':
                         collector = HyperliquidCollector(market_type, market_config)
-                    else:
-                        continue
-                    
-                    self.collectors.append((collector, market_config['symbols']))
-                    print(f"✓ Initialized {exchange_name} {market_type} collector")
-                    
+                        self.collectors.append((collector, market_config['symbols']))
+                        print(f"✓ Initialized {exchange_name} {market_type} collector")
+                        
                 except Exception as e:
                     print(f"✗ Failed to initialize {exchange_name} {market_type}: {e}")
         
-        print(f"Total collectors initialized: {len(self.collectors)}\n")
-    
+        print(f"Total collectors: {len(self.collectors)} REST + {len(self.ws_collectors)} WebSocket\n")
+
+    async def on_trade_received(self, trade: Dict):
+        """Callback для обработки трейда из WebSocket"""
+        async with self.buffer_lock:
+            self.trade_buffer.append(trade)
+
+    async def flush_trade_buffer(self):
+        """Периодически сохранять накопленные трейды в БД"""
+        while self.running:
+            try:
+                await asyncio.sleep(5)  # Сохраняем каждые 5 секунд
+                
+                async with self.buffer_lock:
+                    if self.trade_buffer:
+                        trades_to_save = self.trade_buffer.copy()
+                        self.trade_buffer.clear()
+                
+                if trades_to_save:
+                    self.db.insert_trades(trades_to_save)
+                    print(f"✓ Saved {len(trades_to_save)} trades from WebSocket buffer")
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"✗ Error flushing buffer: {e}")
+        
     async def collect_trades_once(self):
         """Собрать сделки один раз со всех бирж"""
         all_trades = []
@@ -180,8 +226,9 @@ class CVDCollectorApp:
         print(f"\n{'='*80}")
         print(f"CVD Collector Starting - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
         print(f"Configuration:")
+        print(f"  - Mode: {'WebSocket' if config.USE_WEBSOCKET else 'REST API'}")
         print(f"  - Symbols: {', '.join(config.SYMBOLS)}")
-        print(f"  - Collection interval: {config.COLLECTION_INTERVAL}s")
+        print(f"  - Collection interval: {config.COLLECTION_INTERVAL}s (REST only)")
         print(f"  - Aggregation interval: {config.AGGREGATION_INTERVAL}s")
         print(f"{'='*80}\n")
         
@@ -190,25 +237,54 @@ class CVDCollectorApp:
         
         self.initialize_collectors()
         
-        if not self.collectors:
+        if not self.collectors and not self.ws_collectors:
             print("✗ No collectors initialized. Check your .env configuration.")
             return
         
         self.running = True
         
-        collection_task = asyncio.create_task(self.collection_loop())
-        aggregation_task = asyncio.create_task(self.aggregator.run_periodic_aggregation())
+        tasks = []
+        
+        # Запускаем REST коллекторы если есть
+        if self.collectors:
+            tasks.append(asyncio.create_task(self.collection_loop()))
+        
+        # Запускаем WebSocket коллекторы если есть
+        if self.ws_collectors:
+            for collector, symbols in self.ws_collectors:
+                for symbol in symbols:
+                    task = asyncio.create_task(collector.connect(symbol))
+                    self.ws_tasks.append(task)
+                    tasks.append(task)
+            
+            # Запускаем flush буфера
+            tasks.append(asyncio.create_task(self.flush_trade_buffer()))
+        
+        # Агрегация всегда работает
+        tasks.append(asyncio.create_task(self.aggregator.run_periodic_aggregation()))
         
         self.aggregator.shutdown_event = self.shutdown_event
         
         try:
-            await asyncio.gather(collection_task, aggregation_task)
+            await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             print("\nShutdown initiated...")
         finally:
             print("\nClosing collectors...")
+            
+            # Останавливаем WebSocket
+            for collector, _ in self.ws_collectors:
+                await collector.stop()
+            
+            # Сохраняем оставшиеся трейды из буфера
+            if self.trade_buffer:
+                self.db.insert_trades(self.trade_buffer)
+                print(f"✓ Saved final {len(self.trade_buffer)} trades from buffer")
+            
+            # Закрываем REST коллекторы
             for collector, _ in self.collectors:
                 await collector.close_session()
+            
             await self.oi_collector.close_session()
             await self.funding_collector.close_session()
             await self.ls_ratio_collector.close_session()

@@ -14,6 +14,9 @@ AGGREGATION_INTERVAL = int(os.getenv('AGGREGATION_INTERVAL', 300))
 # Symbols
 SYMBOLS = os.getenv('SYMBOLS', 'BTCUSDT').split(',')
 
+# WebSocket mode
+USE_WEBSOCKET = os.getenv('USE_WEBSOCKET', 'false').lower() == 'true'
+
 # Метрики
 COLLECT_OI = os.getenv('COLLECT_OI', 'true').lower() == 'true'
 COLLECT_FUNDING = os.getenv('COLLECT_FUNDING', 'true').lower() == 'true'
